@@ -28,3 +28,7 @@ stats.html
 *.sln
 *.sw?
 /backend/target/
+.m2/
+.npm/
+.jenkins-m2/
+.jenkins-npm/

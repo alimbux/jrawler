@@ -6,14 +6,15 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    triggers {
+        githubPush()
+    }
+
     environment {
-        REGISTRY = 'registry.digitalocean.com/YOUR_REGISTRY'
+        NEXUS_REGISTRY = 'nexus.example.com:8082'
         BACKEND_REPOSITORY = 'jrawler-backend'
         FRONTEND_REPOSITORY = 'jrawler-frontend'
-        REGISTRY_CREDENTIALS_ID = 'digitalocean-registry'
-        DEPLOY_SSH_CREDENTIALS_ID = 'digitalocean-droplet-ssh'
-        DEPLOY_USER = 'root'
-        DEPLOY_HOST = 'YOUR_DROPLET_IP'
+        NEXUS_CREDENTIALS_ID = 'nexus-docker-registry'
         DEPLOY_DIR = '/opt/jrawler'
     }
 
@@ -26,8 +27,8 @@ pipeline {
                         script: 'git rev-parse --short=12 HEAD',
                         returnStdout: true
                     ).trim()
-                    env.BACKEND_IMAGE = "${env.REGISTRY}/${env.BACKEND_REPOSITORY}"
-                    env.FRONTEND_IMAGE = "${env.REGISTRY}/${env.FRONTEND_REPOSITORY}"
+                    env.BACKEND_IMAGE = "${env.NEXUS_REGISTRY}/${env.BACKEND_REPOSITORY}"
+                    env.FRONTEND_IMAGE = "${env.NEXUS_REGISTRY}/${env.FRONTEND_REPOSITORY}"
                 }
             }
         }
@@ -72,18 +73,18 @@ pipeline {
         stage('Push Docker Images') {
             when {
                 anyOf {
-                    branch 'main'
-                    expression { env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'origin/main' }
+                    branch 'master'
+                    expression { env.GIT_BRANCH == 'master' || env.GIT_BRANCH == 'origin/master' }
                 }
             }
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: env.REGISTRY_CREDENTIALS_ID,
-                    usernameVariable: 'REGISTRY_USERNAME',
-                    passwordVariable: 'REGISTRY_PASSWORD'
+                    credentialsId: env.NEXUS_CREDENTIALS_ID,
+                    usernameVariable: 'NEXUS_USERNAME',
+                    passwordVariable: 'NEXUS_PASSWORD'
                 )]) {
                     sh '''
-                        echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+                        echo "$NEXUS_PASSWORD" | docker login "$NEXUS_REGISTRY" -u "$NEXUS_USERNAME" --password-stdin
                         docker push "$BACKEND_IMAGE:$IMAGE_TAG"
                         docker push "$BACKEND_IMAGE:latest"
                         docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
@@ -93,46 +94,41 @@ pipeline {
             }
         }
 
-        stage('Deploy To DigitalOcean') {
+        stage('Deploy Local Compose Stack') {
             when {
                 anyOf {
-                    branch 'main'
-                    expression { env.GIT_BRANCH == 'main' || env.GIT_BRANCH == 'origin/main' }
+                    branch 'master'
+                    expression { env.GIT_BRANCH == 'master' || env.GIT_BRANCH == 'origin/master' }
                 }
             }
             steps {
-                sshagent(credentials: [env.DEPLOY_SSH_CREDENTIALS_ID]) {
-                    withCredentials([usernamePassword(
-                        credentialsId: env.REGISTRY_CREDENTIALS_ID,
-                        usernameVariable: 'REGISTRY_USERNAME',
-                        passwordVariable: 'REGISTRY_PASSWORD'
-                    )]) {
-                        sh '''
-                            ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_DIR'"
-                            scp -o StrictHostKeyChecking=no deploy/docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/docker-compose.prod.yml"
+                withCredentials([usernamePassword(
+                    credentialsId: env.NEXUS_CREDENTIALS_ID,
+                    usernameVariable: 'NEXUS_USERNAME',
+                    passwordVariable: 'NEXUS_PASSWORD'
+                )]) {
+                    sh '''
+                        set -e
+                        mkdir -p "$DEPLOY_DIR"
+                        cp deploy/docker-compose.prod.yml "$DEPLOY_DIR/docker-compose.prod.yml"
+                        cd "$DEPLOY_DIR"
 
-                            ssh -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "
-                                set -e
-                                cd '$DEPLOY_DIR'
+                        if [ ! -f .env ]; then
+                            echo "Missing $DEPLOY_DIR/.env. Create it from deploy/.env.prod.example before deploying." >&2
+                            exit 1
+                        fi
 
-                                if [ ! -f .env ]; then
-                                    echo 'Missing $DEPLOY_DIR/.env on the server. Create it from deploy/.env.prod.example before deploying.' >&2
-                                    exit 1
-                                fi
-
-                                cat > .images.env <<EOF
+                        cat > .images.env <<EOF
 BACKEND_IMAGE=$BACKEND_IMAGE
 FRONTEND_IMAGE=$FRONTEND_IMAGE
 IMAGE_TAG=$IMAGE_TAG
 EOF
 
-                                echo '$REGISTRY_PASSWORD' | docker login '$REGISTRY' -u '$REGISTRY_USERNAME' --password-stdin
-                                docker compose --env-file .env --env-file .images.env -f docker-compose.prod.yml pull
-                                docker compose --env-file .env --env-file .images.env -f docker-compose.prod.yml up -d --remove-orphans
-                                docker image prune -f
-                            "
-                        '''
-                    }
+                        echo "$NEXUS_PASSWORD" | docker login "$NEXUS_REGISTRY" -u "$NEXUS_USERNAME" --password-stdin
+                        docker compose --env-file .env --env-file .images.env -f docker-compose.prod.yml pull
+                        docker compose --env-file .env --env-file .images.env -f docker-compose.prod.yml up -d --remove-orphans
+                        docker image prune -f
+                    '''
                 }
             }
         }
@@ -140,7 +136,7 @@ EOF
 
     post {
         always {
-            sh 'docker logout "$REGISTRY" || true'
+            sh 'docker logout "$NEXUS_REGISTRY" || true'
         }
     }
 }

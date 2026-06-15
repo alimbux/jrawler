@@ -27,6 +27,9 @@ same DigitalOcean instance that runs Nexus and the application stack.
 
 Create these Jenkins credentials:
 
+- `nexus-docker-registry-url`: secret text credential containing the Nexus
+  Docker registry host and port, for example `nexus.example.com:8082`. Do not
+  include `http://`, `https://`, or a trailing slash.
 - `nexus-docker-registry`: username/password credential for Nexus Docker
   registry login.
 
@@ -43,7 +46,6 @@ does not need local Java, Maven, Node, or npm installations. It does need:
 
 Update these values before the first run:
 
-- `NEXUS_REGISTRY`, for example `nexus.example.com:8082`
 - `DEPLOY_DIR`, if you do not want `/opt/jrawler`
 - credential IDs if your Jenkins uses different names
 
@@ -54,3 +56,28 @@ local Docker Compose stack.
 For a classic Jenkins Pipeline job, enable GitHub webhook triggering. For a
 Multibranch Pipeline, configure the GitHub webhook/scan trigger so pushes to
 `master` run this Jenkinsfile.
+
+## Automatic master builds
+
+For a classic Pipeline job:
+
+1. Create a Jenkins Pipeline job.
+2. In **Pipeline**, choose **Pipeline script from SCM**.
+3. Set SCM to Git and repository URL to the GitHub repository.
+4. Set **Branch Specifier** to `*/master`.
+5. Set **Script Path** to `Jenkinsfile`.
+6. In **Build Triggers**, enable **GitHub hook trigger for GITScm polling**.
+7. In GitHub repository settings, add a webhook:
+   - Payload URL: `https://YOUR_JENKINS_HOST/github-webhook/`
+   - Content type: `application/json`
+   - Events: **Just the push event**
+
+For a Multibranch Pipeline:
+
+1. Create a Multibranch Pipeline job.
+2. Add the GitHub source/repository.
+3. Keep branch discovery enabled.
+4. Configure the same GitHub webhook:
+   `https://YOUR_JENKINS_HOST/github-webhook/`.
+5. The `when` conditions in `Jenkinsfile` ensure image push and deploy only run
+   for `master`.

@@ -11,9 +11,9 @@ pipeline {
     }
 
     environment {
-        NEXUS_REGISTRY = 'nexus.example.com:8082'
         BACKEND_REPOSITORY = 'jrawler-backend'
         FRONTEND_REPOSITORY = 'jrawler-frontend'
+        NEXUS_REGISTRY_URL_CREDENTIALS_ID = 'nexus-docker-registry-url'
         NEXUS_CREDENTIALS_ID = 'nexus-docker-registry'
         DEPLOY_DIR = '/opt/jrawler'
     }
@@ -27,8 +27,14 @@ pipeline {
                         script: 'git rev-parse --short=12 HEAD',
                         returnStdout: true
                     ).trim()
-                    env.BACKEND_IMAGE = "${env.NEXUS_REGISTRY}/${env.BACKEND_REPOSITORY}"
-                    env.FRONTEND_IMAGE = "${env.NEXUS_REGISTRY}/${env.FRONTEND_REPOSITORY}"
+                    withCredentials([string(
+                        credentialsId: env.NEXUS_REGISTRY_URL_CREDENTIALS_ID,
+                        variable: 'NEXUS_REGISTRY_URL'
+                    )]) {
+                        env.NEXUS_REGISTRY = NEXUS_REGISTRY_URL.trim().replaceAll('/+$', '')
+                        env.BACKEND_IMAGE = "${env.NEXUS_REGISTRY}/${env.BACKEND_REPOSITORY}"
+                        env.FRONTEND_IMAGE = "${env.NEXUS_REGISTRY}/${env.FRONTEND_REPOSITORY}"
+                    }
                 }
             }
         }
